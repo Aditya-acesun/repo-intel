@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.msg-enter { animation: fadeUp 0.3s ease-out; }
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.cursor-blink { animation: blink 1s step-end infinite; }
+
+body {
+  background-color: #0B0C0E;
+  background-image:
+    radial-gradient(ellipse 800px 500px at 10% 0%, rgba(232, 163, 61, 0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 900px 600px at 100% 100%, rgba(122, 155, 126, 0.06) 0%, transparent 60%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+.sidebar-item {
+  border-left: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+.sidebar-item:hover, .sidebar-item.active {
+  border-left-color: #E8A33D;
+  background: rgba(232, 163, 61, 0.06);
+}
+.sidebar-item.active {
+  border-left-color: #7A9B7E;
+  background: rgba(122, 155, 126, 0.07);
+}
+
+.pulse-dot { position: relative; }
+.pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: inherit;
+  opacity: 0.4;
+  animation: pulse-ring 2s ease-out infinite;
+}
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.4; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+.brand-gradient {
+  background: linear-gradient(135deg, #E8A33D 0%, #F0C275 50%, #E8A33D 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-enter, .cursor-blink, .pulse-dot::after { animation: none; }
+}
