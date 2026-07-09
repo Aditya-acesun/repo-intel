@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     QDRANT_URL: str
     QDRANT_API_KEY: str
+    HF_TOKEN: str
     GITHUB_TOKEN: str
     GROQ_API_KEY: str
     DATABASE_URL: str
