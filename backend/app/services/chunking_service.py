@@ -32,3 +32,15 @@ def chunk_repo_files(files: list):
         chunks = chunk_file(file["content"], file["path"])
         all_chunks.extend(chunks)
     return all_chunks
+def chunk_repo_files(files: list, max_chunks: int = 2000):
+    """
+    Takes the files list from github_service and returns all chunks across all files.
+    Caps total chunks to avoid memory blowup on very large repos.
+    """
+    all_chunks = []
+    for file in files:
+        chunks = chunk_file(file["content"], file["path"])
+        all_chunks.extend(chunks)
+        if len(all_chunks) >= max_chunks:
+            break
+    return all_chunks[:max_chunks]

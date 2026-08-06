@@ -83,22 +83,30 @@ def get_or_create_collection(repo_name: str):
     return QdrantCollection(safe_name)
 
 
-def store_chunks(repo_name: str, chunks: list):
+def store_chunks(repo_name: str, chunks: list, batch_size: int = 25):
     from app.services.embedding_service import embed_texts
 
     collection = get_or_create_collection(repo_name)
+    total_stored = 0
 
-    texts = [c["chunk_text"] for c in chunks]
-    ids = [f"{c['path']}::{c['chunk_index']}" for c in chunks]
-    metadatas = [{"path": c["path"], "chunk_index": c["chunk_index"]} for c in chunks]
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i:i + batch_size]
 
-    embeddings = embed_texts(texts)
+        texts = [c["chunk_text"] for c in batch]
+        ids = [f"{c['path']}::{c['chunk_index']}" for c in batch]
+        metadatas = [{"path": c["path"], "chunk_index": c["chunk_index"]} for c in batch]
 
-    collection.add(
-        ids=ids,
-        embeddings=embeddings,
-        documents=texts,
-        metadatas=metadatas,
-    )
+        embeddings = embed_texts(texts)
 
-    return len(chunks)
+        collection.add(
+            ids=ids,
+            embeddings=embeddings,
+            documents=texts,
+            metadatas=metadatas,
+        )
+
+        total_stored += len(batch)
+        # free the batch's memory before moving to the next one
+        del texts, ids, metadatas, embeddings, batch
+
+    return total_stored
