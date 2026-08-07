@@ -152,3 +152,12 @@ def get_repo_commits(
         return get_commits(repo.repo_url)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+    import traceback
+
+@router.post("/ingest")
+def ingest_repo(...):
+    try:
+        ...
+    except Exception as e:
+        traceback.print_exc()  # ADD THIS LINE
+        raise HTTPException(status_code=400, detail=str(e))
