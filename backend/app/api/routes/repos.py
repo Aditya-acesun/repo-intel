@@ -1,3 +1,4 @@
+import traceback
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -24,6 +25,7 @@ def connect_repo(payload: RepoConnectRequest, current_user: User = Depends(get_c
         result = fetch_repo_files(payload.repo_url)
         return result
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -59,6 +61,7 @@ def ingest_repo(
             "status": "Ingestion complete"
         }
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -111,6 +114,7 @@ def get_repo_graph(
         graph = build_dependency_graph(repo_data["files"])
         return graph
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -131,6 +135,7 @@ def get_repo_file_tree(
     try:
         return get_file_tree(repo.repo_url)
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -151,13 +156,5 @@ def get_repo_commits(
     try:
         return get_commits(repo.repo_url)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    import traceback
-
-@router.post("/ingest")
-def ingest_repo(...):
-    try:
-        ...
-    except Exception as e:
-        traceback.print_exc()  # ADD THIS LINE
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
