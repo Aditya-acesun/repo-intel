@@ -1,6 +1,6 @@
 import base64
-import time
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from github import Github
 from app.core.config import settings
 
@@ -18,10 +18,10 @@ IGNORE_EXTENSIONS = {
 
 MAX_FILE_SIZE = 200_000  # skip files larger than ~200KB to avoid huge payloads
 
-# Small delay between per-file blob fetches to avoid GitHub's secondary
-# (abuse-detection) rate limit, which can trigger even with plenty of
-# core quota remaining if requests fire too fast in a burst.
-BLOB_FETCH_DELAY = 0.05
+# Number of files fetched concurrently. Kept modest to stay well under
+# GitHub's secondary (abuse-detection) rate limit while still being much
+# faster than fetching one file at a time.
+MAX_WORKERS = 8
 
 
 def parse_repo_url(repo_url: str) -> str:
@@ -48,10 +48,13 @@ def should_skip(path: str) -> bool:
 
 def fetch_repo_files(repo_url: str):
     """
-    Fetches the file tree and contents of a GitHub repo using the Git Trees API
-    (a single recursive call) instead of walking directories one-by-one with
-    get_contents, which fires far too many requests for larger repos and trips
-    GitHub's secondary rate limit.
+    Fetches the file tree and contents of a GitHub repo.
+
+    Uses the Git Trees API (a single recursive call) to get the full file
+    listing, then fetches file contents (blobs) concurrently across a small
+    thread pool since each blob fetch is I/O-bound (waiting on GitHub's API,
+    not CPU) — this cuts ingest time down substantially versus fetching
+    files one at a time.
 
     Returns a list of dicts: {path, content, size}
     """
@@ -60,31 +63,33 @@ def fetch_repo_files(repo_url: str):
     repo = g.get_repo(repo_full_name)
 
     tree = repo.get_git_tree(repo.default_branch, recursive=True)
-    files_data = []
 
-    for item in tree.tree:
-        if item.type != "blob":
-            continue
+    candidates = [
+        item for item in tree.tree
+        if item.type == "blob"
+        and not should_skip(item.path)
+        and (not item.size or item.size <= MAX_FILE_SIZE)
+    ]
 
-        if should_skip(item.path):
-            continue
-
-        if item.size and item.size > MAX_FILE_SIZE:
-            continue
-
+    def fetch_one(item):
         try:
             blob = repo.get_git_blob(item.sha)
             decoded_content = base64.b64decode(blob.content).decode("utf-8", errors="ignore")
+            return {
+                "path": item.path,
+                "content": decoded_content,
+                "size": item.size or 0
+            }
         except Exception:
-            continue
+            return None
 
-        files_data.append({
-            "path": item.path,
-            "content": decoded_content,
-            "size": item.size or 0
-        })
-
-        time.sleep(BLOB_FETCH_DELAY)
+    files_data = []
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(fetch_one, item) for item in candidates]
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                files_data.append(result)
 
     return {
         "repo_name": repo.full_name,
