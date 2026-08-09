@@ -1,3 +1,6 @@
+import base64
+import time
+
 from github import Github
 from app.core.config import settings
 
@@ -14,6 +17,11 @@ IGNORE_EXTENSIONS = {
 }
 
 MAX_FILE_SIZE = 200_000  # skip files larger than ~200KB to avoid huge payloads
+
+# Small delay between per-file blob fetches to avoid GitHub's secondary
+# (abuse-detection) rate limit, which can trigger even with plenty of
+# core quota remaining if requests fire too fast in a burst.
+BLOB_FETCH_DELAY = 0.05
 
 
 def parse_repo_url(repo_url: str) -> str:
@@ -40,43 +48,43 @@ def should_skip(path: str) -> bool:
 
 def fetch_repo_files(repo_url: str):
     """
-    Fetches the file tree and contents of a GitHub repo.
+    Fetches the file tree and contents of a GitHub repo using the Git Trees API
+    (a single recursive call) instead of walking directories one-by-one with
+    get_contents, which fires far too many requests for larger repos and trips
+    GitHub's secondary rate limit.
+
     Returns a list of dicts: {path, content, size}
     """
     g = Github(settings.GITHUB_TOKEN)
     repo_full_name = parse_repo_url(repo_url)
     repo = g.get_repo(repo_full_name)
 
-    contents = repo.get_contents("")
+    tree = repo.get_git_tree(repo.default_branch, recursive=True)
     files_data = []
-    stack = list(contents)
 
-    while stack:
-        file_item = stack.pop()
-
-        if file_item.type == "dir":
-            if file_item.name in IGNORE_DIRS:
-                continue
-            stack.extend(repo.get_contents(file_item.path))
+    for item in tree.tree:
+        if item.type != "blob":
             continue
 
-        if should_skip(file_item.path):
+        if should_skip(item.path):
             continue
 
-        if file_item.size > MAX_FILE_SIZE:
+        if item.size and item.size > MAX_FILE_SIZE:
             continue
 
         try:
-            decoded_content = file_item.decoded_content.decode("utf-8", errors="ignore")
+            blob = repo.get_git_blob(item.sha)
+            decoded_content = base64.b64decode(blob.content).decode("utf-8", errors="ignore")
         except Exception:
             continue
 
         files_data.append({
-            "path": file_item.path,
+            "path": item.path,
             "content": decoded_content,
-            "size": file_item.size
+            "size": item.size or 0
         })
-        
+
+        time.sleep(BLOB_FETCH_DELAY)
 
     return {
         "repo_name": repo.full_name,
@@ -88,26 +96,26 @@ def fetch_repo_files(repo_url: str):
 
 
 def get_file_tree(repo_url: str) -> dict:
-    """Returns a nested file tree structure for the repo."""
+    """Returns a nested file tree structure for the repo, via a single Git Trees API call."""
     g = Github(settings.GITHUB_TOKEN)
     repo_full_name = parse_repo_url(repo_url)
     repo = g.get_repo(repo_full_name)
 
-    contents = repo.get_contents("")
+    git_tree = repo.get_git_tree(repo.default_branch, recursive=True)
     tree = []
-    stack = list(contents)
 
-    while stack:
-        item = stack.pop()
-        if item.type == "dir":
-            if item.name in IGNORE_DIRS:
+    for item in git_tree.tree:
+        path_parts = item.path.split("/")
+        name = path_parts[-1]
+
+        if item.type == "tree":
+            if name in IGNORE_DIRS:
                 continue
-            stack.extend(repo.get_contents(item.path))
-            tree.append({"path": item.path, "name": item.name, "type": "dir"})
+            tree.append({"path": item.path, "name": name, "type": "dir"})
         else:
             if should_skip(item.path):
                 continue
-            tree.append({"path": item.path, "name": item.name, "type": "file"})
+            tree.append({"path": item.path, "name": name, "type": "file"})
 
     return {"repo_name": repo.full_name, "tree": sorted(tree, key=lambda x: (x["type"] == "file", x["path"]))}
 
