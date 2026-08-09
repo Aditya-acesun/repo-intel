@@ -18,10 +18,16 @@ IGNORE_EXTENSIONS = {
 
 MAX_FILE_SIZE = 200_000  # skip files larger than ~200KB to avoid huge payloads
 
-# Number of files fetched concurrently. Kept modest to stay well under
-# GitHub's secondary (abuse-detection) rate limit while still being much
-# faster than fetching one file at a time.
-MAX_WORKERS = 8
+# Number of files fetched concurrently. Kept low (rather than something like
+# 8+) because large repos with hundreds/thousands of files were tripping
+# GitHub's secondary (abuse-detection) rate limit hard — resulting in
+# 30+ minute backoffs. 3 concurrent workers is a much safer middle ground.
+MAX_WORKERS = 3
+
+# Cap total files ingested per repo. For huge OSS repos (e.g. google/guava,
+# 2500+ files) there's no need to embed literally everything for a repo-QA
+# tool to be useful — this keeps ingest time and rate-limit risk bounded.
+MAX_FILES_PER_REPO = 300
 
 
 def parse_repo_url(repo_url: str) -> str:
@@ -52,9 +58,9 @@ def fetch_repo_files(repo_url: str):
 
     Uses the Git Trees API (a single recursive call) to get the full file
     listing, then fetches file contents (blobs) concurrently across a small
-    thread pool since each blob fetch is I/O-bound (waiting on GitHub's API,
-    not CPU) — this cuts ingest time down substantially versus fetching
-    files one at a time.
+    thread pool since each blob fetch is I/O-bound. Concurrency is kept
+    deliberately modest and total file count capped to avoid tripping
+    GitHub's secondary rate limit on large repos.
 
     Returns a list of dicts: {path, content, size}
     """
@@ -69,7 +75,7 @@ def fetch_repo_files(repo_url: str):
         if item.type == "blob"
         and not should_skip(item.path)
         and (not item.size or item.size <= MAX_FILE_SIZE)
-    ]
+    ][:MAX_FILES_PER_REPO]
 
     def fetch_one(item):
         try:
