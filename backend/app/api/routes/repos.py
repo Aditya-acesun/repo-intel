@@ -7,7 +7,7 @@ from app.services.chunking_service import chunk_repo_files
 from app.services.vectorstore_service import store_chunks
 from app.services.graph_service import build_dependency_graph
 from app.api.routes.auth import get_current_user
-from app.db.session import get_db
+from app.db.session import get_db, SessionLocal
 from app.models.user import User
 from app.models.repository import Repository
 from app.models.chat_message import ChatMessage
@@ -33,26 +33,34 @@ def connect_repo(payload: RepoConnectRequest, current_user: User = Depends(get_c
 def ingest_repo(
     payload: RepoConnectRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     try:
+        # Slow pipeline first — GitHub fetch, chunking, embeddings, Qdrant upsert.
+        # Deliberately NOT holding a DB session open during any of this, since
+        # Neon's free-tier compute can suspend/idle mid-request and kill a
+        # connection that's just sitting there unused.
         repo_data = fetch_repo_files(payload.repo_url)
         chunks = chunk_repo_files(repo_data["files"])
         stored_count = store_chunks(repo_data["repo_name"], chunks)
 
-        existing = db.query(Repository).filter(
-            Repository.user_id == current_user.id,
-            Repository.repo_name == repo_data["repo_name"]
-        ).first()
+        # Only now, right before we actually need it, open a fresh DB session.
+        db = SessionLocal()
+        try:
+            existing = db.query(Repository).filter(
+                Repository.user_id == current_user.id,
+                Repository.repo_name == repo_data["repo_name"]
+            ).first()
 
-        if not existing:
-            repo_record = Repository(
-                user_id=current_user.id,
-                repo_name=repo_data["repo_name"],
-                repo_url=payload.repo_url
-            )
-            db.add(repo_record)
-            db.commit()
+            if not existing:
+                repo_record = Repository(
+                    user_id=current_user.id,
+                    repo_name=repo_data["repo_name"],
+                    repo_url=payload.repo_url
+                )
+                db.add(repo_record)
+                db.commit()
+        finally:
+            db.close()
 
         return {
             "repo_name": repo_data["repo_name"],
